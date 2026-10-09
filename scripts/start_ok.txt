@@ -1,0 +1,5 @@
+ls
+ls -la /home
+cd /home/user
+cd $USERNAME
+exit

@@ -1,0 +1,7 @@
+ls /
+unknown_command
+cd /var
+exit 1
+mkdir test
+ls -l
+exit
