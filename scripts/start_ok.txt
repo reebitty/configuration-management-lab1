@@ -1,5 +1,5 @@
 ls
-ls -la /home
+ls /home
 cd /home/user
-cd $USERNAME
+ls
 exit

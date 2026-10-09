@@ -1,0 +1,52 @@
+ls
+ls /home/user
+ls home/user/docs
+ls /etc/hostname
+ls /nope
+ls / /home
+ls -l
+ls -h
+ls -a
+ls -l -h -a
+ls -lha
+ls -hal
+ls -lh
+ls -la
+ls -la /home/user
+ls -lh /home/user/docs/file2.txt
+ls -x
+ls -lz /home
+cd /home/user
+ls
+cd docs
+ls .
+cd ..
+ls
+cd ../..
+ls
+cd /var/log/syslog
+cd /nope
+cd / /home
+cd /home
+cd
+ls
+tree
+tree /home
+tree /etc/hostname
+tree /nope
+tree / /home
+cd /home/user/docs
+uniq file2.txt
+uniq /var/log/syslog
+uniq
+uniq /home
+uniq /nope
+uniq file1.txt file2.txt
+cal
+cal 2026
+cal 2 2024
+cal 13 2026
+cal 0
+cal abc
+cal 1 2 3
+exit

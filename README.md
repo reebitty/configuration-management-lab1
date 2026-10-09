@@ -69,14 +69,25 @@ path,type,content
 
 ### Компоненты эмулятора
 * **Интерфейс REPL:** Бесконечный цикл чтения ввода, синтаксического разбора и последовательного вывода результатов обработки. Принимает строки от пользователя через стандартный поток ввода (`input()`).
-* **Динамическое приглашение (Prompt):** Согласно требованиям Варианта 23, промпт формируется функцией `get_prompt()` и включает в себя имя виртуальной файловой системы, например `my_virtual_vfs> ` или `nested> ` (при запуске с `--vfs vfs/nested.csv`).
+* **Динамическое приглашение (Prompt):** Согласно требованиям Варианта 23, промпт формируется функцией `get_prompt()` и включает в себя имя виртуальной файловой системы и текущую папку, например `my_virtual_vfs:/> ` или `nested:/home/user> ` (при запуске с `--vfs vfs/nested.csv`).
 * **Парсер строк с поддержкой окружения:** Функция `parse_input()` выполняет токенизацию введенной строки (разделение по пробелам) и осуществляет автоматическое раскрытие системных переменных окружения реальной операционной системы (например, `$USERNAME`, `$HOME`, `$PATH`) при помощи модуля `os.path.expandvars`.
 * **Обработка исключений:** Встроенный блок `try-except` перехватывает сигналы прерывания процесса `KeyboardInterrupt` (сочетание клавиш Ctrl+C) и `EOFError`, выполняя корректный системный выход без вывода аварийного лога (Traceback).
 
-### Поддерживаемые команды:
-* `exit` — выполняет штатное завершение работы эмулятора с кодом `0`. Поддерживает валидацию аргументов: при попытке ввода дополнительных параметров выводит сообщение об ошибке `exit: too many arguments`.
-* `ls` — команда-заглушка. Принимает любые параметры и флаги, выводит свое имя и переданные аргументы.
-* `cd` — команда-заглушка для имитации смены текущего рабочего каталога. Выводит имя команды и список переданных ей аргументов.
+### Поддерживаемые команды (Этап 4)
+Пути в командах могут быть абсолютными (`/home/user`) и относительными (`docs`, `../var`), поддерживаются `.` и `..`. Состояние эмулятора (VFS и текущая папка) хранится в классе `Shell`.
+
+| Команда | Описание | Ошибки |
+|---|---|---|
+| `exit` | Завершает работу эмулятора с кодом `0`. | `exit: too many arguments` |
+| `ls [-l] [-h] [-a] [путь]` | Выводит содержимое папки (по умолчанию текущей) в алфавитном порядке. Для файла выводит его путь. Ключи можно указывать по отдельности (`-l -h -a`) или вместе в любом порядке (`-lha`, `-hal`, `-lh`, `-la`): `-l` — подробный формат (права, размер, имя), `-h` — размер в удобном виде (`4.0K`) вместе с `-l`, `-a` — показывать также `.`, `..` и скрытые элементы (имена с точки). | `ls: cannot access '...': No such file or directory`, `ls: too many arguments`, `ls: invalid option -- '...'` |
+| `cd [путь]` | Меняет текущую папку. Без аргумента переходит в корень `/`. | `cd: ...: No such file or directory`, `cd: ...: Not a directory`, `cd: too many arguments` |
+| `uniq <файл>` | Выводит содержимое файла, убирая повторяющиеся соседние строки. | `uniq: missing file operand`, `uniq: ...: No such file or directory`, `uniq: ...: Is a directory`, `uniq: too many arguments` |
+| `tree [путь]` | Выводит дерево папок и файлов (по умолчанию текущей папки) и итоговое число папок и файлов. | `tree: ...: No such file or directory`, `tree: ...: Not a directory`, `tree: too many arguments` |
+| `cal` | Календарь на текущий месяц. | — |
+| `cal <год>` | Календарь на весь год. | `cal: year ... not in range 1..9999` |
+| `cal <месяц> <год>` | Календарь на указанный месяц. | `cal: ... is not a month number (1..12)`, `cal: arguments must be numbers`, `cal: too many arguments` |
+
+Неизвестная команда выводит сообщение `<команда>: command not found`.
 
 ## 3. Описание команд для сборки проекта и запуска тестов
 
@@ -107,9 +118,12 @@ python src/emulator.py
 * VFS с 3 и более уровнями вложенности: `.\scripts\run_vfs_nested.bat`
 * Ошибки загрузки VFS (несуществующий файл и неверные данные): `.\scripts\run_vfs_errors.bat`
 
+Скрипт для тестирования команд этапа 4 (`ls`, `cd`, `uniq`, `tree`, `cal`) со всеми режимами и обработкой ошибок (стартовый скрипт `scripts/start_commands.txt`):
+* `.\scripts\run_commands.bat`
+
 Запуск с параметрами вручную:
 ```bash
-python src/emulator.py --vfs vfs/nested.csv --script scripts/start_vfs.txt
+python src/emulator.py --vfs vfs/nested.csv --script scripts/start_commands.txt
 ```
 
 ### Запуск автоматических тестов
@@ -120,30 +134,87 @@ python -m unittest discover -s tests
 
 ## 4. Примеры использования
 
-### Интерактивный сеанс работы (REPL)
+### Команды ls и cd
 ```text
-my_virtual_vfs> ls -la /home
-[Заглушка] Вызвана команда: ls
-Переданные аргументы: -la /home
+nested:/> ls
+etc  home  var
+nested:/> cd /home/user
+nested:/home/user> ls
+docs  photo.bin
+nested:/home/user> cd docs
+nested:/home/user/docs> cd ../..
+nested:/> cd /var/log/syslog
+cd: /var/log/syslog: Not a directory
+nested:/> ls /nope
+ls: cannot access '/nope': No such file or directory
+```
 
-my_virtual_vfs> cd scripts
-[Заглушка] Вызвана команда: cd
-Переданные аргументы: scripts
+### Ключи команды ls
+```text
+nested:/> ls -a /home
+.  ..  user
+nested:/> ls -la /home/user
+drwxr-xr-x 4096 .
+drwxr-xr-x 4096 ..
+drwxr-xr-x 4096 docs
+-rw-r--r--    8 photo.bin
+nested:/> ls -lha /var
+drwxr-xr-x 4.0K .
+drwxr-xr-x 4.0K ..
+drwxr-xr-x 4.0K log
+nested:/> ls -x
+ls: invalid option -- 'x'
+```
+
+### Команда tree
+```text
+nested:/> tree /home
+/home
+└── user
+    ├── docs
+    │   ├── file1.txt
+    │   └── file2.txt
+    └── photo.bin
+
+2 directories, 3 files
+```
+
+### Команда uniq
+```text
+nested:/> uniq /home/user/docs/file2.txt
+строка один
+строка два
+строка три
+nested:/> uniq /home
+uniq: /home: Is a directory
+```
+
+### Команда cal
+```text
+nested:/> cal 2 2024
+   February 2024
+Su Mo Tu We Th Fr Sa
+             1  2  3
+ 4  5  6  7  8  9 10
+11 12 13 14 15 16 17
+18 19 20 21 22 23 24
+25 26 27 28 29
+
+nested:/> cal 13 2026
+cal: 13 is not a month number (1..12)
 ```
 
 ### Раскрытие переменных окружения ОС
 ```text
-my_virtual_vfs> ls $USERNAME
-[Заглушка] Вызвана команда: ls
-Переданные аргументы: Даша
+my_virtual_vfs:/> ls $USERNAME
+ls: cannot access 'Даша': No such file or directory
 ```
 
-### Обработка синтаксических ошибок и неизвестных команд
+### Обработка неизвестных команд и неверных аргументов
 ```text
-my_virtual_vfs> clear
+my_virtual_vfs:/> clear
 clear: command not found
-
-my_virtual_vfs> exit с_аргументами
+my_virtual_vfs:/> exit с_аргументами
 exit: too many arguments
 ```
 
@@ -154,25 +225,21 @@ exit: too many arguments
 [DEBUG]   Путь к VFS: vfs/nested.csv
 [DEBUG]   Стартовый скрипт: scripts/start_errors.txt
 [DEBUG] VFS загружена: папок 6, файлов 5
-nested> ls /
-[Заглушка] Вызвана команда: ls
-Переданные аргументы: /
-nested> unknown_command
+nested:/> ls /
+etc  home  var
+nested:/> unknown_command
 unknown_command: command not found
 Ошибка в стартовом скрипте (строка 2): 'unknown_command' пропущена
-nested> cd /var
-[Заглушка] Вызвана команда: cd
-Переданные аргументы: /var
-nested> exit 1
+nested:/> cd /var
+nested:/var> exit 1
 exit: too many arguments
 Ошибка в стартовом скрипте (строка 4): 'exit 1' пропущена
-nested> mkdir test
+nested:/var> mkdir test
 mkdir: command not found
 Ошибка в стартовом скрипте (строка 5): 'mkdir test' пропущена
-nested> ls -l
-[Заглушка] Вызвана команда: ls
-Переданные аргументы: -l
-nested> exit
+nested:/var> ls -l
+drwxr-xr-x 4096 log
+nested:/var> exit
 Ошибка: стартовый скрипт выполнен с ошибками (строки: 2, 4, 5)
 ```
 
@@ -184,7 +251,7 @@ nested> exit
 [DEBUG]   Стартовый скрипт: missing_script.txt
 [DEBUG] VFS загружена: папок 6, файлов 5
 Ошибка: не удалось открыть стартовый скрипт 'missing_script.txt': No such file or directory
-nested> 
+nested:/> 
 ```
 
 ### Ошибки загрузки VFS

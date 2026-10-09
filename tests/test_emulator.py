@@ -5,9 +5,11 @@ import unittest
 from contextlib import redirect_stdout
 
 from src.emulator import (
+    Shell,
     VfsError,
     count_vfs,
     execute_line,
+    format_size,
     get_vfs_name,
     load_vfs,
     parse_args,
@@ -16,6 +18,19 @@ from src.emulator import (
 )
 
 VFS_DIR = os.path.join(os.path.dirname(__file__), "..", "vfs")
+
+
+def make_shell() -> Shell:
+    """Создает эмулятор с VFS из трех уровней папок."""
+    return Shell("vfs", load_vfs(os.path.join(VFS_DIR, "nested.csv")))
+
+
+def run_line(shell: Shell, line: str) -> tuple[bool, str]:
+    """Выполняет строку и возвращает результат и вывод."""
+    output = io.StringIO()
+    with redirect_stdout(output):
+        result = execute_line(shell, line)
+    return result, output.getvalue()
 
 
 class TestEmulator(unittest.TestCase):
@@ -55,8 +70,8 @@ class TestConfiguration(unittest.TestCase):
     def test_execute_line_error(self) -> None:
         """Тест определения ошибочной строки."""
         with redirect_stdout(io.StringIO()):
-            self.assertFalse(execute_line("unknown"))
-            self.assertTrue(execute_line("ls"))
+            self.assertFalse(execute_line(make_shell(), "unknown"))
+            self.assertTrue(execute_line(make_shell(), "ls"))
 
     def test_run_script_skips_errors(self) -> None:
         """Тест пропуска ошибочных строк стартового скрипта."""
@@ -66,19 +81,19 @@ class TestConfiguration(unittest.TestCase):
             file.write("unknown\ncd /home\n")
         output = io.StringIO()
         with redirect_stdout(output):
-            run_script(file.name, "vfs> ")
+            run_script(file.name, make_shell())
         os.remove(file.name)
         text = output.getvalue()
-        self.assertIn("vfs> unknown", text)
+        self.assertIn("vfs:/> unknown", text)
         self.assertIn("строка 1", text)
         self.assertIn("выполнен с ошибками (строки: 1)", text)
-        self.assertIn("vfs> cd /home", text)
+        self.assertIn("vfs:/> cd /home", text)
 
     def test_run_script_missing_file(self) -> None:
         """Тест сообщения об ошибке при отсутствии скрипта."""
         output = io.StringIO()
         with redirect_stdout(output):
-            run_script("missing_script.txt", "vfs> ")
+            run_script("missing_script.txt", make_shell())
         self.assertIn("не удалось открыть", output.getvalue())
 
 
@@ -143,6 +158,95 @@ class TestVfs(unittest.TestCase):
         """Тест ошибки, когда файл используется как папка."""
         with self.assertRaises(VfsError):
             self.load_text("path,type,content\n/a,file,\n/a/b,dir,\n")
+
+
+class TestCommands(unittest.TestCase):
+    """Тестирование команд четвертого этапа."""
+
+    def test_ls(self) -> None:
+        """Тест вывода содержимого папки и ошибки для пути."""
+        shell = make_shell()
+        self.assertEqual(run_line(shell, "ls /home/user"),
+                         (True, "docs  photo.bin\n"))
+        self.assertFalse(run_line(shell, "ls /nope")[0])
+
+    def test_ls_flags(self) -> None:
+        """Тест ключей ls в любых комбинациях."""
+        shell = make_shell()
+        expected = run_line(shell, "ls -l -h -a /home")
+        self.assertTrue(expected[0])
+        self.assertIn("drwxr-xr-x 4.0K ..", expected[1])
+        for line in ("ls -lha /home", "ls -hal /home", "ls -ahl /home"):
+            self.assertEqual(run_line(shell, line), expected, line)
+        self.assertEqual(run_line(shell, "ls -a /home"),
+                         (True, ".  ..  user\n"))
+        self.assertEqual(run_line(shell, "ls -la /home/user"),
+                         (True, "drwxr-xr-x 4096 .\n"
+                                "drwxr-xr-x 4096 ..\n"
+                                "drwxr-xr-x 4096 docs\n"
+                                "-rw-r--r--    8 photo.bin\n"))
+        self.assertEqual(run_line(shell, "ls -lh /var"),
+                         (True, "drwxr-xr-x 4.0K log\n"))
+
+    def test_ls_invalid_flag(self) -> None:
+        """Тест ошибки при неизвестном ключе ls."""
+        result, output = run_line(make_shell(), "ls -lx")
+        self.assertFalse(result)
+        self.assertEqual(output, "ls: invalid option -- 'x'\n")
+
+    def test_format_size(self) -> None:
+        """Тест вывода размера в удобном для чтения виде."""
+        self.assertEqual(format_size(500, True), "500")
+        self.assertEqual(format_size(4096, False), "4096")
+        self.assertEqual(format_size(4096, True), "4.0K")
+        self.assertEqual(format_size(5 * 1024 * 1024, True), "5.0M")
+
+    def test_cd(self) -> None:
+        """Тест смены папки, перехода вверх и ошибок."""
+        shell = make_shell()
+        self.assertTrue(run_line(shell, "cd /home/user/docs")[0])
+        self.assertEqual(shell.cwd, ["home", "user", "docs"])
+        self.assertTrue(run_line(shell, "cd ../..")[0])
+        self.assertEqual(shell.cwd, ["home"])
+        self.assertFalse(run_line(shell, "cd /etc/hostname")[0])
+        self.assertFalse(run_line(shell, "cd /nope")[0])
+        self.assertTrue(run_line(shell, "cd")[0])
+        self.assertEqual(shell.cwd, [])
+
+    def test_uniq(self) -> None:
+        """Тест удаления повторяющихся соседних строк."""
+        result, output = run_line(make_shell(),
+                                  "uniq /home/user/docs/file2.txt")
+        self.assertTrue(result)
+        self.assertEqual(output, "строка один\nстрока два\nстрока три\n")
+
+    def test_uniq_errors(self) -> None:
+        """Тест ошибок команды uniq."""
+        shell = make_shell()
+        self.assertFalse(run_line(shell, "uniq")[0])
+        self.assertFalse(run_line(shell, "uniq /home")[0])
+        self.assertFalse(run_line(shell, "uniq /nope")[0])
+
+    def test_tree(self) -> None:
+        """Тест вывода дерева папок и файлов."""
+        result, output = run_line(make_shell(), "tree /var")
+        self.assertTrue(result)
+        self.assertEqual(output, "/var\n└── log\n    └── syslog\n"
+                                 "\n1 directories, 1 files\n")
+        self.assertFalse(run_line(make_shell(), "tree /etc/hostname")[0])
+
+    def test_cal(self) -> None:
+        """Тест календаря на месяц, на год и ошибок."""
+        shell = make_shell()
+        result, output = run_line(shell, "cal 2 2024")
+        self.assertTrue(result)
+        self.assertIn("February 2024", output)
+        self.assertIn("29", output)
+        self.assertTrue(run_line(shell, "cal 2026")[0])
+        self.assertTrue(run_line(shell, "cal")[0])
+        self.assertFalse(run_line(shell, "cal 13 2026")[0])
+        self.assertFalse(run_line(shell, "cal abc")[0])
+        self.assertFalse(run_line(shell, "cal 1 2 3")[0])
 
 
 if __name__ == "__main__":

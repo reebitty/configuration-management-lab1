@@ -1,12 +1,23 @@
 import argparse
 import base64
 import binascii
+import calendar
 import csv
+import datetime
 import os
 import sys
+from dataclasses import dataclass, field
 
 DEFAULT_VFS_NAME = "my_virtual_vfs"
 VFS_HEADER = ["path", "type", "content"]
+MAX_CAL_ARGS = 2
+LS_FLAGS = "lha"
+DIR_MODE, FILE_MODE = "drwxr-xr-x", "-rw-r--r--"
+DIR_SIZE = 4096
+KILOBYTE = 1024
+SIZE_UNITS = "KMGT"
+MIN_MONTH, MAX_MONTH = 1, 12
+MIN_YEAR, MAX_YEAR = 1, 9999
 
 
 class VfsError(Exception):
@@ -132,9 +143,254 @@ def count_vfs(node: dict) -> tuple[int, int]:
     return dirs, files
 
 
-def get_prompt(vfs_name: str = DEFAULT_VFS_NAME) -> str:
-    """Формирует приглашение к вводу на основе имени VFS."""
-    return f"{vfs_name}> "
+@dataclass
+class Shell:
+    """Состояние эмулятора: имя VFS, сама VFS и текущая папка."""
+
+    name: str
+    vfs: dict
+    cwd: list[str] = field(default_factory=list)
+
+
+def get_prompt(vfs_name: str = DEFAULT_VFS_NAME, cwd: str = "/") -> str:
+    """Формирует приглашение к вводу на основе имени VFS и текущей папки."""
+    return f"{vfs_name}:{cwd}> "
+
+
+def format_path(parts: list[str]) -> str:
+    """Преобразует список имен в путь VFS."""
+    return "/" + "/".join(parts)
+
+
+def resolve_path(cwd: list[str], path: str) -> list[str]:
+    """Возвращает абсолютный путь с учетом '.', '..' и текущей папки."""
+    parts = [] if path.startswith("/") else list(cwd)
+    for part in split_path(path):
+        if part == "..":
+            if parts:
+                parts.pop()
+        elif part != ".":
+            parts.append(part)
+    return parts
+
+
+def find_node(root: dict, parts: list[str]) -> dict | bytes | None:
+    """Ищет элемент VFS по пути. Возвращает None, если его нет."""
+    node: dict | bytes = root
+    for part in parts:
+        if not isinstance(node, dict) or part not in node:
+            return None
+        node = node[part]
+    return node
+
+
+def get_dir(shell: Shell, command: str, path: str) -> dict | None:
+    """Возвращает папку по пути или выводит ошибку и возвращает None."""
+    node = find_node(shell.vfs, resolve_path(shell.cwd, path))
+    if node is None:
+        print(f"{command}: {path}: No such file or directory")
+        return None
+    if not isinstance(node, dict):
+        print(f"{command}: {path}: Not a directory")
+        return None
+    return node
+
+
+def get_file(shell: Shell, command: str, path: str) -> bytes | None:
+    """Возвращает содержимое файла или выводит ошибку и возвращает None."""
+    node = find_node(shell.vfs, resolve_path(shell.cwd, path))
+    if node is None:
+        print(f"{command}: {path}: No such file or directory")
+        return None
+    if isinstance(node, dict):
+        print(f"{command}: {path}: Is a directory")
+        return None
+    return node
+
+
+def check_max_args(command: str, args: list[str], limit: int) -> bool:
+    """Проверяет, что аргументов не больше допустимого."""
+    if len(args) > limit:
+        print(f"{command}: too many arguments")
+        return False
+    return True
+
+
+def cmd_exit(shell: Shell, args: list[str]) -> bool:
+    """Команда exit: завершает работу эмулятора."""
+    if not check_max_args("exit", args, 0):
+        return False
+    sys.exit(0)
+
+
+def parse_ls_args(args: list[str]) -> tuple[set[str], list[str]] | None:
+    """Разделяет аргументы ls на ключи и пути. При ошибке возвращает None."""
+    flags: set[str] = set()
+    paths = []
+    for arg in args:
+        if arg.startswith("-") and arg != "-":
+            for flag in arg[1:]:
+                if flag not in LS_FLAGS:
+                    print(f"ls: invalid option -- '{flag}'")
+                    return None
+                flags.add(flag)
+        else:
+            paths.append(arg)
+    return flags, paths
+
+
+def format_size(size: int, human: bool) -> str:
+    """Возвращает размер в байтах или в удобном виде (1.0K, 2.5M)."""
+    if not human or size < KILOBYTE:
+        return str(size)
+    value = float(size)
+    unit = ""
+    for unit in SIZE_UNITS:
+        value /= KILOBYTE
+        if value < KILOBYTE:
+            break
+    return f"{value:.1f}{unit}"
+
+
+def list_entries(shell: Shell, node: dict, parts: list[str],
+                 show_all: bool) -> list[tuple[str, dict | bytes]]:
+    """Возвращает элементы папки для ls (с ключом -a также '.' и '..')."""
+    entries = [(name, node[name]) for name in sorted(node)
+               if show_all or not name.startswith(".")]
+    if show_all:
+        parent = find_node(shell.vfs, parts[:-1])
+        entries = [(".", node), ("..", parent)] + entries
+    return entries
+
+
+def print_ls(entries: list[tuple[str, dict | bytes]],
+             flags: set[str]) -> None:
+    """Выводит элементы в кратком или подробном (-l) формате."""
+    if "l" not in flags:
+        if entries:
+            print("  ".join(name for name, _ in entries))
+        return
+    sizes = [
+        format_size(DIR_SIZE if isinstance(item, dict) else len(item),
+                    "h" in flags)
+        for _, item in entries
+    ]
+    width = max((len(size) for size in sizes), default=0)
+    for (name, item), size in zip(entries, sizes):
+        mode = DIR_MODE if isinstance(item, dict) else FILE_MODE
+        print(f"{mode} {size:>{width}} {name}")
+
+
+def cmd_ls(shell: Shell, args: list[str]) -> bool:
+    """Команда ls [-l] [-h] [-a] [путь]: выводит содержимое папки."""
+    parsed = parse_ls_args(args)
+    if parsed is None:
+        return False
+    flags, paths = parsed
+    if not check_max_args("ls", paths, 1):
+        return False
+    path = paths[0] if paths else "."
+    parts = resolve_path(shell.cwd, path)
+    node = find_node(shell.vfs, parts)
+    if node is None:
+        print(f"ls: cannot access '{path}': No such file or directory")
+        return False
+    if isinstance(node, dict):
+        entries = list_entries(shell, node, parts, "a" in flags)
+    else:
+        entries = [(path, node)]
+    print_ls(entries, flags)
+    return True
+
+
+def cmd_cd(shell: Shell, args: list[str]) -> bool:
+    """Команда cd: меняет текущую папку (без аргументов — корень)."""
+    if not check_max_args("cd", args, 1):
+        return False
+    path = args[0] if args else "/"
+    if get_dir(shell, "cd", path) is None:
+        return False
+    shell.cwd = resolve_path(shell.cwd, path)
+    return True
+
+
+def cmd_uniq(shell: Shell, args: list[str]) -> bool:
+    """Команда uniq: выводит файл без повторяющихся соседних строк."""
+    if not args:
+        print("uniq: missing file operand")
+        return False
+    if not check_max_args("uniq", args, 1):
+        return False
+    content = get_file(shell, "uniq", args[0])
+    if content is None:
+        return False
+    previous = None
+    for line in content.decode("utf-8", errors="replace").splitlines():
+        if line != previous:
+            print(line)
+        previous = line
+    return True
+
+
+def print_tree(node: dict, prefix: str) -> None:
+    """Рекурсивно выводит содержимое папки в виде дерева."""
+    names = sorted(node)
+    for name in names:
+        is_last = name == names[-1]
+        print(f"{prefix}{'└── ' if is_last else '├── '}{name}")
+        if isinstance(node[name], dict):
+            print_tree(node[name], prefix + ("    " if is_last else "│   "))
+
+
+def cmd_tree(shell: Shell, args: list[str]) -> bool:
+    """Команда tree: выводит дерево папок и файлов."""
+    if not check_max_args("tree", args, 1):
+        return False
+    path = args[0] if args else "."
+    node = get_dir(shell, "tree", path)
+    if node is None:
+        return False
+    print(path)
+    print_tree(node, "")
+    dirs, files = count_vfs(node)
+    print(f"\n{dirs} directories, {files} files")
+    return True
+
+
+def cmd_cal(shell: Shell, args: list[str]) -> bool:
+    """Команда cal: календарь на месяц ([месяц] год) или на год (год)."""
+    if not check_max_args("cal", args, MAX_CAL_ARGS):
+        return False
+    try:
+        numbers = [int(arg) for arg in args]
+    except ValueError:
+        print("cal: arguments must be numbers")
+        return False
+    today = datetime.date.today()
+    *month, year = numbers or [today.month, today.year]
+    if not MIN_YEAR <= year <= MAX_YEAR:
+        print(f"cal: year {year} not in range {MIN_YEAR}..{MAX_YEAR}")
+        return False
+    text_calendar = calendar.TextCalendar(calendar.SUNDAY)
+    if not month:
+        print(text_calendar.formatyear(year))
+        return True
+    if not MIN_MONTH <= month[0] <= MAX_MONTH:
+        print(f"cal: {month[0]} is not a month number "
+              f"({MIN_MONTH}..{MAX_MONTH})")
+        return False
+    print(text_calendar.formatmonth(year, month[0]))
+    return True
+
+
+COMMANDS = {
+    "exit": cmd_exit,
+    "ls": cmd_ls,
+    "cd": cmd_cd,
+    "uniq": cmd_uniq,
+    "tree": cmd_tree,
+    "cal": cmd_cal,
+}
 
 
 def parse_input(user_input: str) -> list[str]:
@@ -143,28 +399,26 @@ def parse_input(user_input: str) -> list[str]:
     return expanded_input.strip().split()
 
 
-def execute_command(command: str, args: list[str]) -> bool:
+def execute_command(shell: Shell, command: str, args: list[str]) -> bool:
     """Выполняет команду. Возвращает False, если произошла ошибка."""
-    if command == "exit":
-        if args:
-            print("exit: too many arguments")
-            return False
-        sys.exit(0)
-    if command in ("ls", "cd"):
-        args_str = " ".join(args) if args else "нет аргументов"
-        print(f"[Заглушка] Вызвана команда: {command}")
-        print(f"Переданные аргументы: {args_str}")
-        return True
-    print(f"{command}: command not found")
-    return False
+    handler = COMMANDS.get(command)
+    if handler is None:
+        print(f"{command}: command not found")
+        return False
+    return handler(shell, args)
 
 
-def execute_line(line: str) -> bool:
+def execute_line(shell: Shell, line: str) -> bool:
     """Разбирает и выполняет строку. Возвращает False при ошибке."""
     tokens = parse_input(line)
     if not tokens:
         return True
-    return execute_command(tokens[0], tokens[1:])
+    return execute_command(shell, tokens[0], tokens[1:])
+
+
+def make_prompt(shell: Shell) -> str:
+    """Формирует приглашение к вводу для текущего состояния эмулятора."""
+    return get_prompt(shell.name, format_path(shell.cwd))
 
 
 def print_script_result(errors: list[int]) -> None:
@@ -177,7 +431,7 @@ def print_script_result(errors: list[int]) -> None:
         print("Стартовый скрипт выполнен без ошибок")
 
 
-def run_script(script_path: str, prompt: str) -> None:
+def run_script(script_path: str, shell: Shell) -> None:
     """Выполняет команды стартового скрипта, пропуская ошибочные строки."""
     try:
         with open(script_path, encoding="utf-8-sig") as file:
@@ -193,8 +447,8 @@ def run_script(script_path: str, prompt: str) -> None:
             line = line.strip()
             if not line:
                 continue
-            print(f"{prompt}{line}")
-            if not execute_line(line):
+            print(f"{make_prompt(shell)}{line}")
+            if not execute_line(shell, line):
                 errors.append(number)
                 print(f"Ошибка в стартовом скрипте (строка {number}): "
                       f"'{line}' пропущена")
@@ -202,12 +456,12 @@ def run_script(script_path: str, prompt: str) -> None:
         print_script_result(errors)
 
 
-def repl(prompt: str) -> None:
+def repl(shell: Shell) -> None:
     """Главный цикл эмулятора (REPL)."""
     while True:
         try:
-            user_input = input(prompt)
-            execute_line(user_input)
+            user_input = input(make_prompt(shell))
+            execute_line(shell, user_input)
         except (KeyboardInterrupt, EOFError):
             print("\nexit")
             sys.exit(0)
@@ -224,10 +478,10 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(1)
     dirs, files = count_vfs(vfs)
     print(f"[DEBUG] VFS загружена: папок {dirs}, файлов {files}")
-    prompt = get_prompt(get_vfs_name(args.vfs_path))
+    shell = Shell(get_vfs_name(args.vfs_path), vfs)
     if args.script_path:
-        run_script(args.script_path, prompt)
-    repl(prompt)
+        run_script(args.script_path, shell)
+    repl(shell)
 
 
 if __name__ == "__main__":

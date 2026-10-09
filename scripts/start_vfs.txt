@@ -1,5 +1,5 @@
 ls
-ls -l /home/user
+ls /home/user
 cd /var/log
 cd $USERNAME
 unknown_command
