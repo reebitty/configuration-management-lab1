@@ -249,5 +249,52 @@ class TestCommands(unittest.TestCase):
         self.assertFalse(run_line(shell, "cal 1 2 3")[0])
 
 
+class TestCopy(unittest.TestCase):
+    """Тестирование команды cp пятого этапа."""
+
+    def test_cp_file(self) -> None:
+        """Тест копирования файла под новым именем и в папку."""
+        shell = make_shell()
+        self.assertTrue(run_line(shell, "cp /etc/hostname /etc/copy")[0])
+        self.assertEqual(shell.vfs["etc"]["copy"], b"emulator\n")
+        self.assertTrue(run_line(shell, "cp /etc/hostname /var")[0])
+        self.assertIn("hostname", shell.vfs["var"])
+
+    def test_cp_overwrite_file(self) -> None:
+        """Тест перезаписи существующего файла."""
+        shell = make_shell()
+        self.assertTrue(run_line(shell, "cp /etc/hostname /var/log/syslog")[0])
+        self.assertEqual(shell.vfs["var"]["log"]["syslog"], b"emulator\n")
+
+    def test_cp_directory(self) -> None:
+        """Тест рекурсивного копирования папки."""
+        shell = make_shell()
+        self.assertTrue(run_line(shell, "cp -r /home/user /var/copy")[0])
+        copied = shell.vfs["var"]["copy"]
+        self.assertEqual(copied, shell.vfs["home"]["user"])
+        copied["docs"]["new.txt"] = b""
+        self.assertNotIn("new.txt", shell.vfs["home"]["user"]["docs"])
+
+    def test_cp_errors(self) -> None:
+        """Тест ошибок команды cp."""
+        shell = make_shell()
+        for line in ("cp", "cp /etc/hostname", "cp a b c",
+                     "cp /nope /var", "cp /home /var",
+                     "cp /etc/hostname /nope/file",
+                     "cp /etc/hostname /etc/hostname",
+                     "cp -r /home /home/user",
+                     "cp -r /var/log /etc/hostname"):
+            self.assertFalse(run_line(shell, line)[0], line)
+
+    def test_cp_does_not_change_csv(self) -> None:
+        """Тест того, что копирование не изменяет CSV-файл VFS."""
+        path = os.path.join(VFS_DIR, "nested.csv")
+        with open(path, encoding="utf-8") as file:
+            before = file.read()
+        run_line(make_shell(), "cp -r /home /var/home")
+        with open(path, encoding="utf-8") as file:
+            self.assertEqual(file.read(), before)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2,6 +2,7 @@ import argparse
 import base64
 import binascii
 import calendar
+import copy
 import csv
 import datetime
 import os
@@ -16,6 +17,7 @@ DIR_MODE, FILE_MODE = "drwxr-xr-x", "-rw-r--r--"
 DIR_SIZE = 4096
 KILOBYTE = 1024
 SIZE_UNITS = "KMGT"
+CP_OPERANDS = 2
 MIN_MONTH, MAX_MONTH = 1, 12
 MIN_YEAR, MAX_YEAR = 1, 9999
 
@@ -383,6 +385,77 @@ def cmd_cal(shell: Shell, args: list[str]) -> bool:
     return True
 
 
+def get_copy_target(shell: Shell, source_parts: list[str],
+                    target: str) -> list[str]:
+    """Возвращает путь назначения: внутри папки или под новым именем."""
+    target_parts = resolve_path(shell.cwd, target)
+    node = find_node(shell.vfs, target_parts)
+    if isinstance(node, dict) and source_parts:
+        return target_parts + [source_parts[-1]]
+    return target_parts
+
+
+def check_copy(node: dict | bytes, existing: dict | bytes | None,
+               source: str, target: str) -> bool:
+    """Проверяет, можно ли заменить существующий элемент копией."""
+    if existing is None:
+        return True
+    if isinstance(existing, dict) and not isinstance(node, dict):
+        print(f"cp: cannot overwrite directory '{target}' "
+              f"with non-directory")
+        return False
+    if not isinstance(existing, dict) and isinstance(node, dict):
+        print(f"cp: cannot overwrite non-directory '{target}' "
+              f"with directory '{source}'")
+        return False
+    return True
+
+
+def copy_node(shell: Shell, source: str, target: str) -> bool:
+    """Копирует элемент VFS в памяти."""
+    source_parts = resolve_path(shell.cwd, source)
+    node = find_node(shell.vfs, source_parts)
+    target_parts = get_copy_target(shell, source_parts, target)
+    if target_parts == source_parts:
+        print(f"cp: '{source}' and '{target}' are the same file")
+        return False
+    if (isinstance(node, dict)
+            and target_parts[:len(source_parts)] == source_parts):
+        print(f"cp: cannot copy a directory, '{source}', "
+              f"into itself, '{target}'")
+        return False
+    parent = find_node(shell.vfs, target_parts[:-1])
+    if not isinstance(parent, dict):
+        print(f"cp: cannot create '{target}': No such file or directory")
+        return False
+    name = target_parts[-1]
+    if not check_copy(node, parent.get(name), source,
+                      format_path(target_parts)):
+        return False
+    parent[name] = copy.deepcopy(node)
+    return True
+
+
+def cmd_cp(shell: Shell, args: list[str]) -> bool:
+    """Команда cp: копирует файл или папку (с ключом -r)."""
+    recursive = bool(args) and args[0] == "-r"
+    operands = args[1:] if recursive else args
+    if len(operands) < CP_OPERANDS:
+        print("cp: missing file operand")
+        return False
+    if not check_max_args("cp", operands, CP_OPERANDS):
+        return False
+    source, target = operands
+    node = find_node(shell.vfs, resolve_path(shell.cwd, source))
+    if node is None:
+        print(f"cp: cannot stat '{source}': No such file or directory")
+        return False
+    if isinstance(node, dict) and not recursive:
+        print(f"cp: -r not specified; omitting directory '{source}'")
+        return False
+    return copy_node(shell, source, target)
+
+
 COMMANDS = {
     "exit": cmd_exit,
     "ls": cmd_ls,
@@ -390,6 +463,7 @@ COMMANDS = {
     "uniq": cmd_uniq,
     "tree": cmd_tree,
     "cal": cmd_cal,
+    "cp": cmd_cp,
 }
 
 

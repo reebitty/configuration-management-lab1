@@ -73,7 +73,7 @@ path,type,content
 * **Парсер строк с поддержкой окружения:** Функция `parse_input()` выполняет токенизацию введенной строки (разделение по пробелам) и осуществляет автоматическое раскрытие системных переменных окружения реальной операционной системы (например, `$USERNAME`, `$HOME`, `$PATH`) при помощи модуля `os.path.expandvars`.
 * **Обработка исключений:** Встроенный блок `try-except` перехватывает сигналы прерывания процесса `KeyboardInterrupt` (сочетание клавиш Ctrl+C) и `EOFError`, выполняя корректный системный выход без вывода аварийного лога (Traceback).
 
-### Поддерживаемые команды (Этап 4)
+### Поддерживаемые команды (Этапы 4 и 5)
 Пути в командах могут быть абсолютными (`/home/user`) и относительными (`docs`, `../var`), поддерживаются `.` и `..`. Состояние эмулятора (VFS и текущая папка) хранится в классе `Shell`.
 
 | Команда | Описание | Ошибки |
@@ -87,7 +87,12 @@ path,type,content
 | `cal <год>` | Календарь на весь год. | `cal: year ... not in range 1..9999` |
 | `cal <месяц> <год>` | Календарь на указанный месяц. | `cal: ... is not a month number (1..12)`, `cal: arguments must be numbers`, `cal: too many arguments` |
 
+| `cp <источник> <назначение>` | Копирует файл. Если назначение — существующая папка, файл копируется в нее под тем же именем, иначе создается (или перезаписывается) файл с новым именем. | `cp: missing file operand`, `cp: too many arguments`, `cp: cannot stat '...': No such file or directory`, `cp: cannot create '...': No such file or directory`, `cp: '...' and '...' are the same file`, `cp: cannot overwrite directory '...' with non-directory` |
+| `cp -r <папка> <назначение>` | Рекурсивно копирует папку со всем содержимым. Без ключа `-r` папка не копируется. | `cp: -r not specified; omitting directory '...'`, `cp: cannot copy a directory, '...', into itself, '...'`, `cp: cannot overwrite non-directory '...' with directory '...'` |
+
 Неизвестная команда выводит сообщение `<команда>: command not found`.
+
+Команда `cp` изменяет VFS только в памяти: CSV-файл, из которого загружена VFS, не изменяется, и после перезапуска эмулятора VFS снова имеет исходный вид.
 
 ## 3. Описание команд для сборки проекта и запуска тестов
 
@@ -120,6 +125,9 @@ python src/emulator.py
 
 Скрипт для тестирования команд этапа 4 (`ls`, `cd`, `uniq`, `tree`, `cal`) со всеми режимами и обработкой ошибок (стартовый скрипт `scripts/start_commands.txt`):
 * `.\scripts\run_commands.bat`
+
+Скрипт для тестирования команды `cp` этапа 5 (копирование файлов и папок, перезапись, все ошибки; стартовый скрипт `scripts/start_cp.txt`):
+* `.\scripts\run_cp.bat`
 
 Запуск с параметрами вручную:
 ```bash
@@ -202,6 +210,27 @@ Su Mo Tu We Th Fr Sa
 
 nested:/> cal 13 2026
 cal: 13 is not a month number (1..12)
+```
+
+### Команда cp
+```text
+nested:/> cp /etc/hostname /etc/hostname.bak
+nested:/> ls /etc
+hostname  hostname.bak
+nested:/> cp -r /home/user/docs /var/backup
+nested:/> tree /var
+/var
+├── backup
+│   ├── file1.txt
+│   └── file2.txt
+└── log
+    └── syslog
+
+2 directories, 3 files
+nested:/> cp /var/log /tmp
+cp: -r not specified; omitting directory '/var/log'
+nested:/> cp -r /home /home/user
+cp: cannot copy a directory, '/home', into itself, '/home/user'
 ```
 
 ### Раскрытие переменных окружения ОС

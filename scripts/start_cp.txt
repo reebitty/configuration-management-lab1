@@ -1,0 +1,31 @@
+tree
+cp /etc/hostname /etc/hostname.bak
+ls /etc
+cp /etc/hostname /home/user
+ls /home/user
+cd /home/user/docs
+cp file1.txt copy.txt
+ls
+uniq copy.txt
+cp file2.txt copy.txt
+uniq copy.txt
+cp -r /home/user/docs /var/backup
+tree /var
+cp -r /var/log /home
+tree /home
+cp /var/log /tmp
+cp
+cp file1.txt
+cp file1.txt a.txt b.txt
+cp /nope /tmp
+cp file1.txt /nope/file.txt
+cp file1.txt file1.txt
+cp -r /home /home/user
+cp -r /var/log /etc/hostname
+cp /etc/hostname /home/log/syslog
+uniq /home/log/syslog
+cp -r /home/log /var/hostname
+cp /etc/hostname /var
+cd /
+tree
+exit
