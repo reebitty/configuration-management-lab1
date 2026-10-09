@@ -1,0 +1,7 @@
+ls
+ls -l /home/user
+cd /var/log
+cd $USERNAME
+unknown_command
+exit 1
+exit

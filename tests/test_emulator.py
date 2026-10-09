@@ -5,12 +5,17 @@ import unittest
 from contextlib import redirect_stdout
 
 from src.emulator import (
+    VfsError,
+    count_vfs,
     execute_line,
     get_vfs_name,
+    load_vfs,
     parse_args,
     parse_input,
     run_script,
 )
+
+VFS_DIR = os.path.join(os.path.dirname(__file__), "..", "vfs")
 
 
 class TestEmulator(unittest.TestCase):
@@ -75,6 +80,69 @@ class TestConfiguration(unittest.TestCase):
         with redirect_stdout(output):
             run_script("missing_script.txt", "vfs> ")
         self.assertIn("не удалось открыть", output.getvalue())
+
+
+class TestVfs(unittest.TestCase):
+    """Тестирование загрузки VFS для третьего этапа."""
+
+    def load_text(self, text: str) -> dict:
+        """Загружает VFS из временного CSV-файла с заданным текстом."""
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".csv", delete=False, encoding="utf-8"
+        ) as file:
+            file.write(text)
+        try:
+            return load_vfs(file.name)
+        finally:
+            os.remove(file.name)
+
+    def test_load_without_path(self) -> None:
+        """Тест пустой VFS при отсутствии пути."""
+        self.assertEqual(load_vfs(None), {})
+
+    def test_load_minimal(self) -> None:
+        """Тест загрузки минимальной VFS."""
+        vfs = load_vfs(os.path.join(VFS_DIR, "minimal.csv"))
+        self.assertEqual(count_vfs(vfs), (0, 0))
+
+    def test_load_nested(self) -> None:
+        """Тест загрузки VFS с несколькими уровнями вложенности."""
+        vfs = load_vfs(os.path.join(VFS_DIR, "nested.csv"))
+        self.assertEqual(count_vfs(vfs), (6, 5))
+        docs = vfs["home"]["user"]["docs"]
+        self.assertEqual(docs["file1.txt"].decode("utf-8"),
+                         "Привет из файла номер один!\n")
+
+    def test_load_binary(self) -> None:
+        """Тест декодирования двоичных данных из base64."""
+        vfs = load_vfs(os.path.join(VFS_DIR, "files.csv"))
+        self.assertEqual(vfs["image.bin"], bytes(range(16)))
+        self.assertEqual(vfs["empty.txt"], b"")
+
+    def test_load_missing_file(self) -> None:
+        """Тест ошибки при отсутствии файла VFS."""
+        with self.assertRaises(VfsError):
+            load_vfs("missing.csv")
+
+    def test_load_bad_header(self) -> None:
+        """Тест ошибки при неверном заголовке CSV."""
+        with self.assertRaises(VfsError):
+            self.load_text("name,kind\n/a,dir\n")
+
+    def test_load_bad_base64(self) -> None:
+        """Тест ошибки при содержимом не в формате base64."""
+        with self.assertRaises(VfsError):
+            load_vfs(os.path.join(VFS_DIR, "bad.csv"))
+
+    def test_load_bad_type(self) -> None:
+        """Тест ошибки при неизвестном типе элемента."""
+        with self.assertRaises(VfsError):
+            self.load_text("path,type,content\n/a,link,\n")
+
+    def test_load_file_as_dir(self) -> None:
+        """Тест ошибки, когда файл используется как папка."""
+        with self.assertRaises(VfsError):
+            self.load_text("path,type,content\n/a,file,\n/a/b,dir,\n")
 
 
 if __name__ == "__main__":

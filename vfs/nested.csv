@@ -1,0 +1,13 @@
+path,type,content
+/,dir,
+/home,dir,
+/home/user,dir,
+/home/user/docs,dir,
+/home/user/docs/file1.txt,file,0J/RgNC40LLQtdGCINC40Lcg0YTQsNC50LvQsCDQvdC+0LzQtdGAINC+0LTQuNC9IQo=
+/home/user/docs/file2.txt,file,0YHRgtGA0L7QutCwINC+0LTQuNC9CtGB0YLRgNC+0LrQsCDQtNCy0LAK0YHRgtGA0L7QutCwINC00LLQsArRgdGC0YDQvtC60LAg0YLRgNC4Cg==
+/home/user/photo.bin,file,iVBORw0KGgo=
+/var,dir,
+/var/log,dir,
+/var/log/syslog,file,0KHQuNGB0YLQtdC80L3Ri9C5INC70L7QsyDQv9GD0YHRgi4K
+/etc,dir,
+/etc/hostname,file,ZW11bGF0b3IK

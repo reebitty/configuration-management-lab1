@@ -1,0 +1,3 @@
+path,type,content
+/home,dir,
+/home/file.txt,file,это не base64!
